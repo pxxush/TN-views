@@ -47,11 +47,11 @@ var import_obsidian = require("obsidian");
 var TNViewPlugin = class extends import_obsidian.Plugin {
   onload() {
     return __async(this, null, function* () {
-      this.registerMarkdownCodeBlockProcessor("tn-view", (source, el) => __async(this, null, function* () {
+      this.registerMarkdownCodeBlockProcessor("tn-view", (source, el, ctx) => __async(this, null, function* () {
         try {
           const filter = (0, import_obsidian.parseYaml)(source) || {};
           const tasks = yield this.getFilteredTasks(filter);
-          this.renderCards(tasks, el);
+          yield this.renderAsInline(tasks, el, filter, ctx.sourcePath);
         } catch (e) {
           el.createEl("div", { text: "TN-View: Invalid filter syntax" });
         }
@@ -75,9 +75,12 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
         if (filter.status && fm.status !== filter.status) continue;
         if (filter.project) {
           const raw = fm.projects;
+          if (!raw) continue;
           const projects = Array.isArray(raw) ? raw : [raw];
-          const needle = filter.project.toLowerCase().replace(/\[\[|\]\]/g, "");
-          const match = projects.some((p) => p == null ? void 0 : p.toLowerCase().includes(needle));
+          const needle = filter.project.toLowerCase().replace(/\[\[|\]\]/g, "").trim();
+          const match = projects.some(
+            (p) => p == null ? void 0 : p.toLowerCase().replace(/\[\[|\]\]/g, "").trim().includes(needle)
+          );
           if (!match) continue;
         }
         if (filter.scheduled) {
@@ -103,7 +106,8 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
           title: fm.title || file.basename,
           status: fm.status,
           scheduled: fm.scheduled,
-          due: fm.due
+          due: fm.due,
+          projects: fm.projects ? Array.isArray(fm.projects) ? fm.projects : [fm.projects] : []
         });
       }
       tasks.sort((a, b) => {
@@ -114,31 +118,44 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
       return tasks;
     });
   }
-  renderCards(tasks, el) {
-    el.addClass("tn-view-container");
-    if (tasks.length === 0) {
-      el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
-      return;
-    }
-    for (const task of tasks) {
-      const card = el.createEl("div", { cls: "tn-view-card" });
-      card.createEl("span", {
-        text: task.status || "",
-        cls: `tn-view-status tn-view-status-${task.status}`
-      });
-      const titleEl = card.createEl("span", {
-        text: task.title,
-        cls: "tn-view-title"
-      });
-      titleEl.addEventListener("click", () => {
-        this.app.workspace.openLinkText(task.file.basename, "", false);
-      });
-      if (task.scheduled || task.due) {
-        const dateEl = card.createEl("span", { cls: "tn-view-date" });
-        if (task.scheduled) dateEl.createSpan({ text: "\u{1F4C5} " + task.scheduled });
-        if (task.due) dateEl.createSpan({ text: " \u2691 " + task.due });
+  renderAsInline(tasks, el, filter, sourcePath) {
+    return __async(this, null, function* () {
+      el.addClass("tn-view-container");
+      if (tasks.length === 0) {
+        el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
+        return;
       }
-    }
+      if (filter.project) {
+        const projectName = filter.project.replace(/\[\[|\]\]/g, "").trim();
+        const projectFile = this.app.metadataCache.getFirstLinkpathDest(projectName, sourcePath);
+        const titleEl = el.createEl("div", { cls: "tn-view-project-title" });
+        if (projectFile) {
+          const link = titleEl.createEl("a", {
+            text: projectName,
+            cls: "internal-link tn-view-project-link"
+          });
+          link.addEventListener("click", () => {
+            this.app.workspace.openLinkText(projectName, sourcePath, false);
+          });
+        } else {
+          titleEl.createEl("span", { text: projectName });
+        }
+      }
+      const component = new import_obsidian.Component();
+      component.load();
+      for (const task of tasks) {
+        const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
+        const linkText = `[[${task.file.basename}]]`;
+        yield import_obsidian.MarkdownRenderer.render(
+          this.app,
+          linkText,
+          taskEl,
+          sourcePath,
+          component
+        );
+      }
+      component.unload();
+    });
   }
   onunload() {
   }

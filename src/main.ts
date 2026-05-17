@@ -1,4 +1,4 @@
-import { Plugin, MarkdownPostProcessorContext, TFile, parseYaml } from "obsidian";
+import { Plugin, parseYaml, TFile, MarkdownRenderer, Component } from "obsidian";
 
 interface TNViewFilter {
   project?: string;
@@ -14,15 +14,16 @@ interface TaskNote {
   status?: string;
   scheduled?: string;
   due?: string;
+  projects?: string[];
 }
 
 export default class TNViewPlugin extends Plugin {
   async onload() {
-    this.registerMarkdownCodeBlockProcessor("tn-view", async (source, el) => {
+    this.registerMarkdownCodeBlockProcessor("tn-view", async (source, el, ctx) => {
       try {
         const filter: TNViewFilter = parseYaml(source) || {};
         const tasks = await this.getFilteredTasks(filter);
-        this.renderCards(tasks, el);
+        await this.renderAsInline(tasks, el, filter, ctx.sourcePath);
       } catch (e) {
         el.createEl("div", { text: "TN-View: Invalid filter syntax" });
       }
@@ -47,9 +48,12 @@ export default class TNViewPlugin extends Plugin {
 
       if (filter.project) {
         const raw = fm.projects;
+        if (!raw) continue;
         const projects = Array.isArray(raw) ? raw : [raw];
-        const needle = filter.project.toLowerCase().replace(/\[\[|\]\]/g, "");
-        const match = projects.some((p: string) => p?.toLowerCase().includes(needle));
+        const needle = filter.project.toLowerCase().replace(/\[\[|\]\]/g, "").trim();
+        const match = projects.some((p: string) =>
+          p?.toLowerCase().replace(/\[\[|\]\]/g, "").trim().includes(needle)
+        );
         if (!match) continue;
       }
 
@@ -80,6 +84,7 @@ export default class TNViewPlugin extends Plugin {
         status: fm.status,
         scheduled: fm.scheduled,
         due: fm.due,
+        projects: fm.projects ? (Array.isArray(fm.projects) ? fm.projects : [fm.projects]) : [],
       });
     }
 
@@ -92,7 +97,7 @@ export default class TNViewPlugin extends Plugin {
     return tasks;
   }
 
-  renderCards(tasks: TaskNote[], el: HTMLElement) {
+  async renderAsInline(tasks: TaskNote[], el: HTMLElement, filter: TNViewFilter, sourcePath: string) {
     el.addClass("tn-view-container");
 
     if (tasks.length === 0) {
@@ -100,29 +105,43 @@ export default class TNViewPlugin extends Plugin {
       return;
     }
 
-    for (const task of tasks) {
-      const card = el.createEl("div", { cls: "tn-view-card" });
+    // If filtering by project, show project title on top
+    if (filter.project) {
+      const projectName = filter.project.replace(/\[\[|\]\]/g, "").trim();
+      const projectFile = this.app.metadataCache.getFirstLinkpathDest(projectName, sourcePath);
 
-      card.createEl("span", {
-        text: task.status || "",
-        cls: `tn-view-status tn-view-status-${task.status}`
-      });
+      const titleEl = el.createEl("div", { cls: "tn-view-project-title" });
 
-      const titleEl = card.createEl("span", {
-        text: task.title,
-        cls: "tn-view-title"
-      });
-
-      titleEl.addEventListener("click", () => {
-        this.app.workspace.openLinkText(task.file.basename, "", false);
-      });
-
-      if (task.scheduled || task.due) {
-        const dateEl = card.createEl("span", { cls: "tn-view-date" });
-        if (task.scheduled) dateEl.createSpan({ text: "📅 " + task.scheduled });
-        if (task.due) dateEl.createSpan({ text: " ⚑ " + task.due });
+      if (projectFile) {
+        const link = titleEl.createEl("a", {
+          text: projectName,
+          cls: "internal-link tn-view-project-link"
+        });
+        link.addEventListener("click", () => {
+          this.app.workspace.openLinkText(projectName, sourcePath, false);
+        });
+      } else {
+        titleEl.createEl("span", { text: projectName });
       }
     }
+
+    // Render each task as a wikilink so TaskNotes renders its inline card
+    const component = new Component();
+    component.load();
+
+    for (const task of tasks) {
+      const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
+      const linkText = `[[${task.file.basename}]]`;
+      await MarkdownRenderer.render(
+        this.app,
+        linkText,
+        taskEl,
+        sourcePath,
+        component
+      );
+    }
+
+    component.unload();
   }
 
   onunload() {}
