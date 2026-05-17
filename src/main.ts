@@ -12,7 +12,6 @@ interface TNViewFilter {
 
 interface TaskNote {
   file: TFile;
-  title: string;
   status?: string;
   scheduled?: string;
   due?: string;
@@ -48,12 +47,8 @@ export default class TNViewPlugin extends Plugin {
 
       const results: boolean[] = [];
 
-      // Status
-      if (filter.status) {
-        results.push(fm.status === filter.status);
-      }
+      if (filter.status) results.push(fm.status === filter.status);
 
-      // Project
       if (filter.project) {
         const raw = fm.projects;
         if (!raw) {
@@ -67,7 +62,6 @@ export default class TNViewPlugin extends Plugin {
         }
       }
 
-      // Scheduled
       if (filter.scheduled) {
         const s = fm.scheduled;
         let pass = false;
@@ -78,7 +72,6 @@ export default class TNViewPlugin extends Plugin {
         results.push(pass);
       }
 
-      // Due
       if (filter.due) {
         const d = fm.due;
         let pass = false;
@@ -89,7 +82,6 @@ export default class TNViewPlugin extends Plugin {
         results.push(pass);
       }
 
-      // Tags
       if (filter.tags && filter.tags.length > 0) {
         const fm_tags: string[] = [];
         if (fm.tags) {
@@ -101,17 +93,12 @@ export default class TNViewPlugin extends Plugin {
         results.push(filter.tags.some(tag => allTags.includes(tag.replace("#", "").trim())));
       }
 
-      // Apply match logic
       if (results.length === 0) continue;
-      const passed = matchAny
-        ? results.some(r => r)
-        : results.every(r => r);
-
+      const passed = matchAny ? results.some(r => r) : results.every(r => r);
       if (!passed) continue;
 
       tasks.push({
         file,
-        title: fm.title || file.basename,
         status: fm.status,
         scheduled: fm.scheduled,
         due: fm.due,
@@ -127,6 +114,23 @@ export default class TNViewPlugin extends Plugin {
     return tasks;
   }
 
+  async renderTaskLink(file: TFile, container: HTMLElement, sourcePath: string, component: Component) {
+    const temp = container.createEl("div");
+    await MarkdownRenderer.render(
+      this.app,
+      `[[${file.basename}]]`,
+      temp,
+      sourcePath,
+      component
+    );
+    // MarkdownRenderer wraps in <p> — unwrap it to remove spacing
+    const p = temp.querySelector("p");
+    if (p) {
+      while (p.firstChild) container.appendChild(p.firstChild);
+      temp.remove();
+    }
+  }
+
   async renderView(tasks: TaskNote[], el: HTMLElement, filter: TNViewFilter, sourcePath: string) {
     el.addClass("tn-view-container");
 
@@ -139,9 +143,11 @@ export default class TNViewPlugin extends Plugin {
     if (hasName) {
       const titleRow = el.createEl("div", { cls: "tn-view-title-row" });
       if (isWikilink) {
-        await MarkdownRenderer.render(
-          this.app,
-          filter.name!.trim(),
+        await this.renderTaskLink(
+          this.app.metadataCache.getFirstLinkpathDest(
+            filter.name!.trim().replace(/\[\[|\]\]/g, ""),
+            sourcePath
+          ) as TFile,
           titleRow,
           sourcePath,
           component
@@ -159,13 +165,7 @@ export default class TNViewPlugin extends Plugin {
     } else {
       for (const task of tasks) {
         const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
-        await MarkdownRenderer.render(
-          this.app,
-          `[[${task.file.basename}]]`,
-          taskEl,
-          sourcePath,
-          component
-        );
+        await this.renderTaskLink(task.file, taskEl, sourcePath, component);
       }
     }
 

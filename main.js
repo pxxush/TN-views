@@ -74,9 +74,7 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
         const fm = cache.frontmatter;
         if (!fm.status) continue;
         const results = [];
-        if (filter.status) {
-          results.push(fm.status === filter.status);
-        }
+        if (filter.status) results.push(fm.status === filter.status);
         if (filter.project) {
           const raw = fm.projects;
           if (!raw) {
@@ -122,7 +120,6 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
         if (!passed) continue;
         tasks.push({
           file,
-          title: fm.title || file.basename,
           status: fm.status,
           scheduled: fm.scheduled,
           due: fm.due
@@ -136,6 +133,23 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
       return tasks;
     });
   }
+  renderTaskLink(file, container, sourcePath, component) {
+    return __async(this, null, function* () {
+      const temp = container.createEl("div");
+      yield import_obsidian.MarkdownRenderer.render(
+        this.app,
+        `[[${file.basename}]]`,
+        temp,
+        sourcePath,
+        component
+      );
+      const p = temp.querySelector("p");
+      if (p) {
+        while (p.firstChild) container.appendChild(p.firstChild);
+        temp.remove();
+      }
+    });
+  }
   renderView(tasks, el, filter, sourcePath) {
     return __async(this, null, function* () {
       el.addClass("tn-view-container");
@@ -146,9 +160,11 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
       if (hasName) {
         const titleRow = el.createEl("div", { cls: "tn-view-title-row" });
         if (isWikilink) {
-          yield import_obsidian.MarkdownRenderer.render(
-            this.app,
-            filter.name.trim(),
+          yield this.renderTaskLink(
+            this.app.metadataCache.getFirstLinkpathDest(
+              filter.name.trim().replace(/\[\[|\]\]/g, ""),
+              sourcePath
+            ),
             titleRow,
             sourcePath,
             component
@@ -165,13 +181,7 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
       } else {
         for (const task of tasks) {
           const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
-          yield import_obsidian.MarkdownRenderer.render(
-            this.app,
-            `[[${task.file.basename}]]`,
-            taskEl,
-            sourcePath,
-            component
-          );
+          yield this.renderTaskLink(task.file, taskEl, sourcePath, component);
         }
       }
       component.unload();
