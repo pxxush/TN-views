@@ -1,6 +1,7 @@
 import { Plugin, parseYaml, TFile, MarkdownRenderer, Component } from "obsidian";
 
 interface TNViewFilter {
+  name?: string;
   project?: string;
   status?: string;
   scheduled?: string;
@@ -23,7 +24,7 @@ export default class TNViewPlugin extends Plugin {
       try {
         const filter: TNViewFilter = parseYaml(source) || {};
         const tasks = await this.getFilteredTasks(filter);
-        await this.renderAsInline(tasks, el, filter, ctx.sourcePath);
+        await this.renderView(tasks, el, filter, ctx.sourcePath);
       } catch (e) {
         el.createEl("div", { text: "TN-View: Invalid filter syntax" });
       }
@@ -74,8 +75,21 @@ export default class TNViewPlugin extends Plugin {
       }
 
       if (filter.tags && filter.tags.length > 0) {
-        const fileTags = cache.tags?.map(t => t.tag.replace("#", "")) || [];
-        if (!filter.tags.some(tag => fileTags.includes(tag))) continue;
+        const fm_tags: string[] = [];
+
+        // Read tags from frontmatter property
+        if (fm.tags) {
+          const raw = Array.isArray(fm.tags) ? fm.tags : [fm.tags];
+          raw.forEach((t: string) => {
+            fm_tags.push(t.replace("#", "").trim());
+          });
+        }
+
+        // Also read from note body tags
+        const body_tags = cache.tags?.map(t => t.tag.replace("#", "")) || [];
+        const allTags = [...new Set([...fm_tags, ...body_tags])];
+
+        if (!filter.tags.some(tag => allTags.includes(tag.replace("#", "").trim()))) continue;
       }
 
       tasks.push({
@@ -97,48 +111,70 @@ export default class TNViewPlugin extends Plugin {
     return tasks;
   }
 
-  async renderAsInline(tasks: TaskNote[], el: HTMLElement, filter: TNViewFilter, sourcePath: string) {
+  async renderView(tasks: TaskNote[], el: HTMLElement, filter: TNViewFilter, sourcePath: string) {
     el.addClass("tn-view-container");
 
-    if (tasks.length === 0) {
-      el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
-      return;
-    }
-
-    // If filtering by project, show project title on top
-    if (filter.project) {
-      const projectName = filter.project.replace(/\[\[|\]\]/g, "").trim();
-      const projectFile = this.app.metadataCache.getFirstLinkpathDest(projectName, sourcePath);
-
-      const titleEl = el.createEl("div", { cls: "tn-view-project-title" });
-
-      if (projectFile) {
-        const link = titleEl.createEl("a", {
-          text: projectName,
-          cls: "internal-link tn-view-project-link"
-        });
-        link.addEventListener("click", () => {
-          this.app.workspace.openLinkText(projectName, sourcePath, false);
-        });
-      } else {
-        titleEl.createEl("span", { text: projectName });
-      }
-    }
-
-    // Render each task as a wikilink so TaskNotes renders its inline card
     const component = new Component();
     component.load();
 
-    for (const task of tasks) {
-      const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
-      const linkText = `[[${task.file.basename}]]`;
-      await MarkdownRenderer.render(
-        this.app,
-        linkText,
-        taskEl,
-        sourcePath,
-        component
-      );
+    const hasName = filter.name && filter.name.trim().length > 0;
+    const isWikilink = hasName && filter.name!.trim().startsWith("[[");
+
+    if (hasName) {
+      // Title row
+      const titleRow = el.createEl("div", { cls: "tn-view-title-row" });
+
+      if (isWikilink) {
+        // Render as inline TaskNotes card
+        await MarkdownRenderer.render(
+          this.app,
+          filter.name!.trim(),
+          titleRow,
+          sourcePath,
+          component
+        );
+      } else {
+        // Plain text heading
+        titleRow.createEl("span", {
+          text: filter.name!.trim(),
+          cls: "tn-view-heading"
+        });
+      }
+
+      // Nested tasks container
+      if (tasks.length === 0) {
+        const emptyEl = el.createEl("div", { cls: "tn-view-nested tn-view-empty" });
+        emptyEl.createEl("span", { text: "No tasks found." });
+      } else {
+        const nestedEl = el.createEl("div", { cls: "tn-view-nested" });
+        for (const task of tasks) {
+          const taskEl = nestedEl.createEl("div", { cls: "tn-view-task-row" });
+          await MarkdownRenderer.render(
+            this.app,
+            `[[${task.file.basename}]]`,
+            taskEl,
+            sourcePath,
+            component
+          );
+        }
+      }
+
+    } else {
+      // Flat list — no title, no nesting
+      if (tasks.length === 0) {
+        el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
+      } else {
+        for (const task of tasks) {
+          const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
+          await MarkdownRenderer.render(
+            this.app,
+            `[[${task.file.basename}]]`,
+            taskEl,
+            sourcePath,
+            component
+          );
+        }
+      }
     }
 
     component.unload();

@@ -51,7 +51,7 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
         try {
           const filter = (0, import_obsidian.parseYaml)(source) || {};
           const tasks = yield this.getFilteredTasks(filter);
-          yield this.renderAsInline(tasks, el, filter, ctx.sourcePath);
+          yield this.renderView(tasks, el, filter, ctx.sourcePath);
         } catch (e) {
           el.createEl("div", { text: "TN-View: Invalid filter syntax" });
         }
@@ -98,8 +98,16 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
           if (filter.due.startsWith("after:") && (!d || d <= filter.due.replace("after:", "").trim())) continue;
         }
         if (filter.tags && filter.tags.length > 0) {
-          const fileTags = ((_a = cache.tags) == null ? void 0 : _a.map((t) => t.tag.replace("#", ""))) || [];
-          if (!filter.tags.some((tag) => fileTags.includes(tag))) continue;
+          const fm_tags = [];
+          if (fm.tags) {
+            const raw = Array.isArray(fm.tags) ? fm.tags : [fm.tags];
+            raw.forEach((t) => {
+              fm_tags.push(t.replace("#", "").trim());
+            });
+          }
+          const body_tags = ((_a = cache.tags) == null ? void 0 : _a.map((t) => t.tag.replace("#", ""))) || [];
+          const allTags = [.../* @__PURE__ */ new Set([...fm_tags, ...body_tags])];
+          if (!filter.tags.some((tag) => allTags.includes(tag.replace("#", "").trim()))) continue;
         }
         tasks.push({
           file,
@@ -118,41 +126,60 @@ var TNViewPlugin = class extends import_obsidian.Plugin {
       return tasks;
     });
   }
-  renderAsInline(tasks, el, filter, sourcePath) {
+  renderView(tasks, el, filter, sourcePath) {
     return __async(this, null, function* () {
       el.addClass("tn-view-container");
-      if (tasks.length === 0) {
-        el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
-        return;
-      }
-      if (filter.project) {
-        const projectName = filter.project.replace(/\[\[|\]\]/g, "").trim();
-        const projectFile = this.app.metadataCache.getFirstLinkpathDest(projectName, sourcePath);
-        const titleEl = el.createEl("div", { cls: "tn-view-project-title" });
-        if (projectFile) {
-          const link = titleEl.createEl("a", {
-            text: projectName,
-            cls: "internal-link tn-view-project-link"
-          });
-          link.addEventListener("click", () => {
-            this.app.workspace.openLinkText(projectName, sourcePath, false);
-          });
-        } else {
-          titleEl.createEl("span", { text: projectName });
-        }
-      }
       const component = new import_obsidian.Component();
       component.load();
-      for (const task of tasks) {
-        const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
-        const linkText = `[[${task.file.basename}]]`;
-        yield import_obsidian.MarkdownRenderer.render(
-          this.app,
-          linkText,
-          taskEl,
-          sourcePath,
-          component
-        );
+      const hasName = filter.name && filter.name.trim().length > 0;
+      const isWikilink = hasName && filter.name.trim().startsWith("[[");
+      if (hasName) {
+        const titleRow = el.createEl("div", { cls: "tn-view-title-row" });
+        if (isWikilink) {
+          yield import_obsidian.MarkdownRenderer.render(
+            this.app,
+            filter.name.trim(),
+            titleRow,
+            sourcePath,
+            component
+          );
+        } else {
+          titleRow.createEl("span", {
+            text: filter.name.trim(),
+            cls: "tn-view-heading"
+          });
+        }
+        if (tasks.length === 0) {
+          const emptyEl = el.createEl("div", { cls: "tn-view-nested tn-view-empty" });
+          emptyEl.createEl("span", { text: "No tasks found." });
+        } else {
+          const nestedEl = el.createEl("div", { cls: "tn-view-nested" });
+          for (const task of tasks) {
+            const taskEl = nestedEl.createEl("div", { cls: "tn-view-task-row" });
+            yield import_obsidian.MarkdownRenderer.render(
+              this.app,
+              `[[${task.file.basename}]]`,
+              taskEl,
+              sourcePath,
+              component
+            );
+          }
+        }
+      } else {
+        if (tasks.length === 0) {
+          el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
+        } else {
+          for (const task of tasks) {
+            const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
+            yield import_obsidian.MarkdownRenderer.render(
+              this.app,
+              `[[${task.file.basename}]]`,
+              taskEl,
+              sourcePath,
+              component
+            );
+          }
+        }
       }
       component.unload();
     });
