@@ -1,0 +1,38 @@
+.tn-view-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0px;
+  padding: 0;
+  margin: 0;
+}
+
+.tn-view-task-row {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.tn-view-task-row p {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.tn-view-task-row .tasknote-inline {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.tn-view-heading {
+  font-weight: 600;
+  font-size: 1em;
+  padding-bottom: 4px;
+  display: block;
+}
+
+.tn-view-title-row {
+  margin-bottom: 2px;
+}
+
+.tn-view-empty {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}

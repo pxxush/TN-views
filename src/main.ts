@@ -7,6 +7,7 @@ interface TNViewFilter {
   scheduled?: string;
   due?: string;
   tags?: string[];
+  match?: string;
 }
 
 interface TaskNote {
@@ -15,7 +16,6 @@ interface TaskNote {
   status?: string;
   scheduled?: string;
   due?: string;
-  projects?: string[];
 }
 
 export default class TNViewPlugin extends Plugin {
@@ -38,6 +38,7 @@ export default class TNViewPlugin extends Plugin {
     const weekLater = new Date();
     weekLater.setDate(weekLater.getDate() + 7);
     const weekStr = weekLater.toISOString().split("T")[0];
+    const matchAny = filter.match?.toLowerCase() === "any";
 
     for (const file of files) {
       const cache = this.app.metadataCache.getFileCache(file);
@@ -45,52 +46,68 @@ export default class TNViewPlugin extends Plugin {
       const fm = cache.frontmatter;
       if (!fm.status) continue;
 
-      if (filter.status && fm.status !== filter.status) continue;
+      const results: boolean[] = [];
 
+      // Status
+      if (filter.status) {
+        results.push(fm.status === filter.status);
+      }
+
+      // Project
       if (filter.project) {
         const raw = fm.projects;
-        if (!raw) continue;
-        const projects = Array.isArray(raw) ? raw : [raw];
-        const needle = filter.project.toLowerCase().replace(/\[\[|\]\]/g, "").trim();
-        const match = projects.some((p: string) =>
-          p?.toLowerCase().replace(/\[\[|\]\]/g, "").trim().includes(needle)
-        );
-        if (!match) continue;
+        if (!raw) {
+          results.push(false);
+        } else {
+          const projects = Array.isArray(raw) ? raw : [raw];
+          const needle = filter.project.toLowerCase().replace(/\[\[|\]\]/g, "").trim();
+          results.push(projects.some((p: string) =>
+            p?.toLowerCase().replace(/\[\[|\]\]/g, "").trim().includes(needle)
+          ));
+        }
       }
 
+      // Scheduled
       if (filter.scheduled) {
         const s = fm.scheduled;
-        if (filter.scheduled === "today" && s !== today) continue;
-        if (filter.scheduled === "week" && (!s || s < today || s > weekStr)) continue;
-        if (filter.scheduled.startsWith("before:") && (!s || s >= filter.scheduled.replace("before:", "").trim())) continue;
-        if (filter.scheduled.startsWith("after:") && (!s || s <= filter.scheduled.replace("after:", "").trim())) continue;
+        let pass = false;
+        if (filter.scheduled === "today") pass = s === today;
+        else if (filter.scheduled === "week") pass = !!s && s >= today && s <= weekStr;
+        else if (filter.scheduled.startsWith("before:")) pass = !!s && s < filter.scheduled.replace("before:", "").trim();
+        else if (filter.scheduled.startsWith("after:")) pass = !!s && s > filter.scheduled.replace("after:", "").trim();
+        results.push(pass);
       }
 
+      // Due
       if (filter.due) {
         const d = fm.due;
-        if (filter.due === "today" && d !== today) continue;
-        if (filter.due === "week" && (!d || d < today || d > weekStr)) continue;
-        if (filter.due.startsWith("before:") && (!d || d >= filter.due.replace("before:", "").trim())) continue;
-        if (filter.due.startsWith("after:") && (!d || d <= filter.due.replace("after:", "").trim())) continue;
+        let pass = false;
+        if (filter.due === "today") pass = d === today;
+        else if (filter.due === "week") pass = !!d && d >= today && d <= weekStr;
+        else if (filter.due.startsWith("before:")) pass = !!d && d < filter.due.replace("before:", "").trim();
+        else if (filter.due.startsWith("after:")) pass = !!d && d > filter.due.replace("after:", "").trim();
+        results.push(pass);
       }
 
+      // Tags
       if (filter.tags && filter.tags.length > 0) {
         const fm_tags: string[] = [];
-
-        // Read tags from frontmatter property
         if (fm.tags) {
           const raw = Array.isArray(fm.tags) ? fm.tags : [fm.tags];
-          raw.forEach((t: string) => {
-            fm_tags.push(t.replace("#", "").trim());
-          });
+          raw.forEach((t: string) => fm_tags.push(t.replace("#", "").trim()));
         }
-
-        // Also read from note body tags
         const body_tags = cache.tags?.map(t => t.tag.replace("#", "")) || [];
         const allTags = [...new Set([...fm_tags, ...body_tags])];
-
-        if (!filter.tags.some(tag => allTags.includes(tag.replace("#", "").trim()))) continue;
+        results.push(filter.tags.some(tag => allTags.includes(tag.replace("#", "").trim())));
       }
+
+      // Apply match logic
+      if (results.length === 0) continue;
+      const passed = matchAny
+        ? results.some(r => r)
+        : results.every(r => r);
+
+      if (!passed) continue;
 
       tasks.push({
         file,
@@ -98,7 +115,6 @@ export default class TNViewPlugin extends Plugin {
         status: fm.status,
         scheduled: fm.scheduled,
         due: fm.due,
-        projects: fm.projects ? (Array.isArray(fm.projects) ? fm.projects : [fm.projects]) : [],
       });
     }
 
@@ -121,11 +137,8 @@ export default class TNViewPlugin extends Plugin {
     const isWikilink = hasName && filter.name!.trim().startsWith("[[");
 
     if (hasName) {
-      // Title row
       const titleRow = el.createEl("div", { cls: "tn-view-title-row" });
-
       if (isWikilink) {
-        // Render as inline TaskNotes card
         await MarkdownRenderer.render(
           this.app,
           filter.name!.trim(),
@@ -134,46 +147,25 @@ export default class TNViewPlugin extends Plugin {
           component
         );
       } else {
-        // Plain text heading
         titleRow.createEl("span", {
           text: filter.name!.trim(),
           cls: "tn-view-heading"
         });
       }
+    }
 
-      // Nested tasks container
-      if (tasks.length === 0) {
-        const emptyEl = el.createEl("div", { cls: "tn-view-nested tn-view-empty" });
-        emptyEl.createEl("span", { text: "No tasks found." });
-      } else {
-        const nestedEl = el.createEl("div", { cls: "tn-view-nested" });
-        for (const task of tasks) {
-          const taskEl = nestedEl.createEl("div", { cls: "tn-view-task-row" });
-          await MarkdownRenderer.render(
-            this.app,
-            `[[${task.file.basename}]]`,
-            taskEl,
-            sourcePath,
-            component
-          );
-        }
-      }
-
+    if (tasks.length === 0) {
+      el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
     } else {
-      // Flat list — no title, no nesting
-      if (tasks.length === 0) {
-        el.createEl("div", { text: "No tasks found.", cls: "tn-view-empty" });
-      } else {
-        for (const task of tasks) {
-          const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
-          await MarkdownRenderer.render(
-            this.app,
-            `[[${task.file.basename}]]`,
-            taskEl,
-            sourcePath,
-            component
-          );
-        }
+      for (const task of tasks) {
+        const taskEl = el.createEl("div", { cls: "tn-view-task-row" });
+        await MarkdownRenderer.render(
+          this.app,
+          `[[${task.file.basename}]]`,
+          taskEl,
+          sourcePath,
+          component
+        );
       }
     }
 
