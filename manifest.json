@@ -1,0 +1,9 @@
+{
+  "id": "tn-view",
+  "name": "TN View",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Portable embeddable TaskNotes views inside any markdown note",
+  "author": "pxxush",
+  "isDesktopOnly": false
+}
