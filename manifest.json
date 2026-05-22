@@ -3,7 +3,7 @@
   "name": "TN View",
   "version": "1.0.5",
   "minAppVersion": "1.4.0",
-  "description": "Portable embeddable TaskNotes views inside any markdown note",
+  "description": "Embeddable TaskNotes views inside any markdown note",
   "author": "pxxush",
   "isDesktopOnly": false
 }
