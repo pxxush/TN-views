@@ -30,6 +30,37 @@ export default class TNViewPlugin extends Plugin {
     });
   }
 
+  matchesDateFilter(filterVal: string, dateVal: string | undefined, today: string, weekStr: string): boolean {
+    if (!filterVal) return true;
+    const f = filterVal.trim();
+    if (f === "today") return dateVal === today;
+    if (f === "week") return !!dateVal && dateVal >= today && dateVal <= weekStr;
+    if (f.startsWith("before:")) return !!dateVal && dateVal < f.replace("before:", "").trim();
+    if (f.startsWith("after:")) return !!dateVal && dateVal > f.replace("after:", "").trim();
+    if (f.startsWith("on:")) return dateVal === f.replace("on:", "").trim();
+    if (f.startsWith("days:")) {
+      const n = parseInt(f.replace("days:", "").trim());
+      if (isNaN(n)) return false;
+      const future = new Date();
+      future.setDate(future.getDate() + n);
+      const futureStr = future.toISOString().split("T")[0];
+      return !!dateVal && dateVal >= today && dateVal <= futureStr;
+    }
+    return false;
+  }
+
+  matchesTagFilter(filterTags: string[], fileTags: string[]): boolean {
+    return filterTags.some(filterTag => {
+      const isBranch = filterTag.endsWith("/");
+      if (isBranch) {
+        const prefix = filterTag.toLowerCase();
+        return fileTags.some(ft => ft.toLowerCase().startsWith(prefix));
+      } else {
+        return fileTags.some(ft => ft.toLowerCase() === filterTag.toLowerCase());
+      }
+    });
+  }
+
   async getFilteredTasks(filter: TNViewFilter): Promise<TaskNote[]> {
     const files = this.app.vault.getMarkdownFiles();
     const tasks: TaskNote[] = [];
@@ -63,23 +94,11 @@ export default class TNViewPlugin extends Plugin {
       }
 
       if (filter.scheduled) {
-        const s = fm.scheduled;
-        let pass = false;
-        if (filter.scheduled === "today") pass = s === today;
-        else if (filter.scheduled === "week") pass = !!s && s >= today && s <= weekStr;
-        else if (filter.scheduled.startsWith("before:")) pass = !!s && s < filter.scheduled.replace("before:", "").trim();
-        else if (filter.scheduled.startsWith("after:")) pass = !!s && s > filter.scheduled.replace("after:", "").trim();
-        results.push(pass);
+        results.push(this.matchesDateFilter(filter.scheduled, fm.scheduled, today, weekStr));
       }
 
       if (filter.due) {
-        const d = fm.due;
-        let pass = false;
-        if (filter.due === "today") pass = d === today;
-        else if (filter.due === "week") pass = !!d && d >= today && d <= weekStr;
-        else if (filter.due.startsWith("before:")) pass = !!d && d < filter.due.replace("before:", "").trim();
-        else if (filter.due.startsWith("after:")) pass = !!d && d > filter.due.replace("after:", "").trim();
-        results.push(pass);
+        results.push(this.matchesDateFilter(filter.due, fm.due, today, weekStr));
       }
 
       if (filter.tags && filter.tags.length > 0) {
@@ -90,7 +109,8 @@ export default class TNViewPlugin extends Plugin {
         }
         const body_tags = cache.tags?.map(t => t.tag.replace("#", "")) || [];
         const allTags = [...new Set([...fm_tags, ...body_tags])];
-        results.push(filter.tags.some(tag => allTags.includes(tag.replace("#", "").trim())));
+        const cleanFilterTags = filter.tags.map(t => t.replace("#", "").trim());
+        results.push(this.matchesTagFilter(cleanFilterTags, allTags));
       }
 
       if (results.length === 0) continue;
@@ -123,7 +143,6 @@ export default class TNViewPlugin extends Plugin {
       sourcePath,
       component
     );
-    // MarkdownRenderer wraps in <p> — unwrap it to remove spacing
     const p = temp.querySelector("p");
     if (p) {
       while (p.firstChild) container.appendChild(p.firstChild);
@@ -143,15 +162,13 @@ export default class TNViewPlugin extends Plugin {
     if (hasName) {
       const titleRow = el.createEl("div", { cls: "tn-view-title-row" });
       if (isWikilink) {
-        await this.renderTaskLink(
-          this.app.metadataCache.getFirstLinkpathDest(
-            filter.name!.trim().replace(/\[\[|\]\]/g, ""),
-            sourcePath
-          ) as TFile,
-          titleRow,
-          sourcePath,
-          component
-        );
+        const linkName = filter.name!.trim().replace(/\[\[|\]\]/g, "");
+        const linkFile = this.app.metadataCache.getFirstLinkpathDest(linkName, sourcePath);
+        if (linkFile) {
+          await this.renderTaskLink(linkFile as TFile, titleRow, sourcePath, component);
+        } else {
+          titleRow.createEl("span", { text: linkName, cls: "tn-view-heading" });
+        }
       } else {
         titleRow.createEl("span", {
           text: filter.name!.trim(),
